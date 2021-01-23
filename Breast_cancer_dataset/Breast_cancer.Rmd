@@ -1,0 +1,832 @@
+---
+title: "Breast_cancer"
+author: "Manpreet S. Katari"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(caret)
+
+```
+
+# Breast cancer dataset
+
+In this markdown we will use different classification technologies to determine which performs well with the dataset provided. Namely
+
+- Logistic Regression
+- Decision Tree
+- Random Forest
+- Support Vector Machines
+
+We will also try some standard data processing methods to see how it influences the results. Specifically
+
+- Removing highly correlated variables
+- Missing data
+
+To evaluate the results we will use the F1-score. This score takes recall and precision into consideration and gives us a much better look at the results, rather than just accuracy.
+
+# 3.2 Data
+
+The data was downloaded from http://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic).  
+
+The column we will will predict is **diagnosis**. The values in this field are **M** for malignant, and **B** for benign.  Using the other variables we will try to predict whether a tumor malignant or benign.
+
+We will assign the **diagnosis** column to  **Y**  and the remaining variables as **X**.
+
+```{r}
+df = read.csv("breast_cancer_data.csv")
+df = subset(df, select= -c(id, X))
+
+head(df)
+```
+
+- Convert label M to 1 and B to 0.
+- Drop the diagnosis column from the dataframe
+
+```{r}
+Y = ifelse(df$diagnosis == "M", 1, 0)
+df = select(df, -(diagnosis))
+
+```
+
+We are interested only in the columns with the suffix *_mean* for our analysis
+
+```{r}
+
+X = select(df, contains("mean"))
+head(X)
+
+
+```
+
+## 3.3.1 Splitting data for training and testing
+
+We will use the *train_test_split* function to split our dataset.
+The *test_size* parameter tells the method to keep 80% training and 20% testing.
+The *stratify* parameter tells the method to keep the same propportion of success and failures in the different sets. However in our case we want the new data to represent as closely as possible to real data so we don't want to assume that the data will be in the same proportion. In this book we set the stratify parameter to None.
+
+Cross validation is a common method to make sure that all data points have an opportunity to be part of the test and the training dataset. If we were to use a 10x cross validation we would get 10 different F-scores. In this case, we use 100-fold cross-validation and get a list of F-scores. From the distribution we will take the 5th and 95th highest value which provide a 90% confidence interval.
+
+We consider two different scores: training score and testing score. The training score is simply predicting the diagnoses (malignant or benign) based on the same dataset that we built the prediction. This often gives us the best possible performance for our model. The testing score is based on the predictions using the test set. This is the more meaningful comparison because we are designing our model to work for new data. Because the test data is invisible when the model is built, the test data is a good representative of new data. For that reason, we recommend that you report only the test scores.
+
+
+```{r}
+train_test_split = function(X, Y, test_size, random_state) {
+  set.seed(random_state)
+  train_index = createDataPartition(Y, p=1-test_size,list=F,times=1)
+  X_test = X[-train_index,]
+  Y_test = Y[-train_index]
+  X_train = X[train_index,]
+  Y_train = Y[train_index]
+  return(list(X_test=X_test, Y_test = Y_test, 
+              X_train = X_train, Y_train = Y_train))
+}
+samplerun = train_test_split(X, Y, .2, 123)
+```
+
+
+## 3.4.1 Logistic Regression
+
+
+```{r}
+library(MLmetrics)
+logreg <- function(X_train, X_test, Y_train, Y_test){
+    Y_train = as.factor(Y_train)
+    Y_test = as.factor(Y_test)
+    temp_train = cbind(Y_train, X_train)
+    colnames(temp_train)[1]='Y'
+    
+    #clf = polr(as.factor(Y) ~ . , data = temp_train)
+    clf = train(as.factor(Y) ~ ., 
+                data=temp_train,
+                method="glm",
+                family="binomial",
+                trControl=trainControl(method="none")
+                )
+    #print(summary(clf))
+    
+    Y_train_predicted = predict(clf, newdata = X_train)
+    #print(Y_train_predicted)
+    train_score = prSummary(data.frame(obs=as.factor(Y_train),
+                                 pred=Y_train_predicted),
+                      lev=levels(Y_train_predicted))
+    
+    
+    Y_test_predicted = predict(clf, newdata = X_test)
+
+    test_score = prSummary(data.frame(obs=as.factor(Y_test),
+                                 pred=Y_test_predicted),
+                      lev=levels(Y_test_predicted))
+    scores = c(train_score["F"], test_score["F"])
+    names(scores)=c("train_score","test_score")
+    return(scores)
+  
+}
+
+tempres =logreg(samplerun$X_train, samplerun$X_test, 
+       samplerun$Y_train, samplerun$Y_test)
+```
+
+
+
+```{r warning=FALSE, message=FALSE}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X, Y, .2, i)
+  scores[i,] = logreg(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+logreg_test_scores = sort(scores[,2])[c(5,95)]
+```
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+plot_scores_hist = function( scores, title ) {
+  scores_melt = melt(as.data.frame(scores), variable.name = "Data")
+  
+  ggplot(scores_melt) + 
+    geom_histogram(mapping=aes(value, fill=Data), alpha=0.5
+                   ,stat = "bin",bins = 10
+                   ) +
+    ggtitle(title) +
+    labs(x="F score") +
+    labs(y="Density")
+    
+}
+
+plot_scores_hist(scores, "Logistic Regression")
+```
+
+## 3.4.2 Decision Tree Classifier
+
+```{r}
+library(party)
+decisiontree <- function(X_train, X_test, Y_train, Y_test){
+    Y_train = as.factor(Y_train)
+    Y_test = as.factor(Y_test)
+    temp_train = cbind(Y_train, X_train)
+    colnames(temp_train)[1]='Y'
+    
+    #clf = polr(as.factor(Y) ~ . , data = temp_train)
+    clf = train(as.factor(Y) ~ ., 
+                data=temp_train,
+                method="ctree",
+                trControl=trainControl(method="none")
+                )
+    #print(summary(clf))
+    
+    Y_train_predicted = predict(clf, newdata = X_train)
+    #print(Y_train_predicted)
+    train_score = prSummary(data.frame(obs=as.factor(Y_train),
+                                 pred=Y_train_predicted),
+                      lev=levels(Y_train_predicted))
+    
+    
+    Y_test_predicted = predict(clf, newdata = X_test)
+
+    test_score = prSummary(data.frame(obs=as.factor(Y_test),
+                                 pred=Y_test_predicted),
+                      lev=levels(Y_test_predicted))
+    scores = c(train_score["F"], test_score["F"])
+    names(scores)=c("train_score","test_score")
+    return(scores)
+  
+}
+
+tempres =decisiontree(samplerun$X_train, samplerun$X_test, 
+       samplerun$Y_train, samplerun$Y_test)
+
+```
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X, Y, .2, i)
+  scores[i,] = decisiontree(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+dtrees_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Decision Trees")
+
+```
+
+## 3.4.3 Random Forest Classifier
+
+```{r}
+library(party)
+randomforest <- function(X_train, X_test, Y_train, Y_test){
+    Y_train = as.factor(Y_train)
+    Y_test = as.factor(Y_test)
+    temp_train = cbind(Y_train, X_train)
+    colnames(temp_train)[1]='Y'
+    
+    #clf = polr(as.factor(Y) ~ . , data = temp_train)
+    clf = train(as.factor(Y) ~ ., 
+                data=temp_train,
+                method="cforest",
+                trControl=trainControl(method="none")
+                )
+    #print(summary(clf))
+    
+    Y_train_predicted = predict(clf, newdata = X_train)
+    #print(Y_train_predicted)
+    train_score = prSummary(data.frame(obs=as.factor(Y_train),
+                                 pred=Y_train_predicted),
+                      lev=levels(Y_train_predicted))
+    
+    
+    Y_test_predicted = predict(clf, newdata = X_test)
+
+    test_score = prSummary(data.frame(obs=as.factor(Y_test),
+                                 pred=Y_test_predicted),
+                      lev=levels(Y_test_predicted))
+    scores = c(train_score["F"], test_score["F"])
+    names(scores)=c("train_score","test_score")
+    return(scores)
+  
+}
+
+tempres =randomforest(samplerun$X_train, samplerun$X_test, 
+       samplerun$Y_train, samplerun$Y_test)
+
+```
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X, Y, .2, i)
+  scores[i,] = randomforest(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+rforest_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Random Forest")
+
+```
+
+
+## 3.4.4 SVM
+
+```{r}
+library(party)
+mysvm <- function(X_train, X_test, Y_train, Y_test){
+    Y_train = as.factor(Y_train)
+    Y_test = as.factor(Y_test)
+    temp_train = cbind(Y_train, X_train)
+    colnames(temp_train)[1]='Y'
+    
+    #clf = polr(as.factor(Y) ~ . , data = temp_train)
+    clf = train(as.factor(Y) ~ ., 
+                data=temp_train,
+                method="svmLinear2",
+                trControl=trainControl(method="none")
+                )
+    #print(summary(clf))
+    
+    Y_train_predicted = predict(clf, newdata = X_train)
+    #print(Y_train_predicted)
+    train_score = prSummary(data.frame(obs=as.factor(Y_train),
+                                 pred=Y_train_predicted),
+                      lev=levels(Y_train_predicted))
+    
+    
+    Y_test_predicted = predict(clf, newdata = X_test)
+
+    test_score = prSummary(data.frame(obs=as.factor(Y_test),
+                                 pred=Y_test_predicted),
+                      lev=levels(Y_test_predicted))
+    scores = c(train_score["F"], test_score["F"])
+    names(scores)=c("train_score","test_score")
+    return(scores)
+  
+}
+
+tempres =mysvm(samplerun$X_train, samplerun$X_test, 
+       samplerun$Y_train, samplerun$Y_test)
+
+```
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X, Y, .2, i)
+  scores[i,] = mysvm(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+svm_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "SVM")
+
+```
+
+```{r}
+summary_test_score = rbind(logreg_test_scores, dtrees_test_scores,
+                           rforest_test_scores, svm_test_scores)
+print(summary_test_score)
+
+#logreg_test_scores  0.9185185 0.9781022
+#dtrees_test_scores  0.8985507 0.9668874
+#rforest_test_scores 0.9133858 0.9736842
+#svm_test_scores     0.9115646 0.9743590
+```
+
+## 3.4.5 Removing highly correlated variables
+
+The best scenario is to get the best possible results with the fewest number of variables. Variables that are highly correlated with each other are redundant and do not provide any additional information. In some cases the extra variables may cause certain algorithms to fail. Here we remove all variables that are more than 90% identical and repeat all the models as shown above.  
+
+```{r}
+#install.packages("ggcorrplot")
+library(ggcorrplot)
+
+corr = round(cor(X), 2)
+ggcorrplot(corr, type="lower", lab=T, hc.order =T)
+
+```
+
+
+```{r}
+X_select = select(X,select= -c('perimeter_mean','area_mean','concavity_mean'))
+corr = round(cor(X_select), 1)
+ggcorrplot(corr, type="lower", lab=T, hc.order =F)
+
+```
+
+### Logistic Regression
+
+```{r warning=FALSE, message=FALSE}
+
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  scores[i,] = logreg(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+logreg_test_scores = sort(scores[,2])[c(5,95)]
+
+```
+
+### Decision Tree
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  scores[i,] = decisiontree(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+dtrees_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Decision Trees")
+
+```
+
+### Random Forest
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  scores[i,] = randomforest(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+rforest_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Random Forest")
+
+```
+
+### SVM
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  scores[i,] = mysvm(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+svm_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "SVM")
+
+```
+```{r}
+summary_test_score = rbind(logreg_test_scores, dtrees_test_scores,
+                           rforest_test_scores, svm_test_scores)
+print(summary_test_score)
+
+# before selecting variables
+#logreg_test_scores  0.9185185 0.9781022
+#dtrees_test_scores  0.8985507 0.9668874
+#rforest_test_scores 0.9133858 0.9736842
+#svm_test_scores     0.9115646 0.9743590
+
+
+#after reducing variables
+#logreg_test_scores  0.9171975 0.9729730
+#dtrees_test_scores  0.8970588 0.9605263
+#rforest_test_scores 0.9064748 0.9736842
+#svm_test_scores     0.9139073 0.9714286
+```
+
+# 3.5 Missing data
+
+On accassion, data can missing for certain variables. There are several ways of dealing with this problem, but here we will discuss two main ones:
++ remove the rows with missing data
++ impute the value using the median value of the variable.
+
+We  repeat the different predictive methods to see which method can deal with missing data the best. Here we will randomly remove 35% of the data. Some observations will have more missing data than others.
+
+The results below are summarized in Table 3.4
+
+```{r}
+#import random
+#random.seed(123)
+#def get_data_with_missing_values(data, portion_to_remove):
+#    data_copy = data.copy()
+#    ix = [(row, col) for row in range(data_copy.shape[0]) 
+#          for col in range(data_copy.shape[1])]
+#    for row, col in random.sample(ix, 
+#                                  int(round(portion_to_remove*len(ix)))):
+#        data_copy.iat[row, col] = np.nan
+#    return data_copy
+set.seed(123)
+get_data_with_missing_values <- function(data, portion_to_remove) {
+  ix = melt(as.matrix(data))
+  
+  remidx = sample(nrow(ix), floor(portion_to_remove*nrow(ix)), replace=F)
+  
+  ix[remidx,"value"]=NA
+  data_copy = dcast(ix, Var1 ~ Var2, value.var="value")
+  data_copy = subset(data_copy, select = -c(Var1))
+
+  return(data_copy)
+  
+}
+
+```
+
+```{r}
+X_missing = get_data_with_missing_values(X_select, 0.35)
+head(X_missing)
+```
+
+## Remove rows with missing values
+
+```{r}
+
+head(na.omit(X_missing))
+
+```
+
+### Logistic Regression
+
+```{r warning=FALSE, message=FALSE}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  X_missing$Y = samplerun$Y_train
+  removed_data = na.omit(X_missing)
+  samplerun$Y_train = removed_data$Y
+  samplerun$X_train = subset(removed_data, select=-c(Y))
+  
+  scores[i,] = logreg(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+logreg_test_scores = sort(scores[,2])[c(5,95)]
+
+```
+
+### Decision Tree
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  X_missing$Y = samplerun$Y_train
+  removed_data = na.omit(X_missing)
+  samplerun$Y_train = removed_data$Y
+  samplerun$X_train = subset(removed_data, select=-c(Y))
+  
+  scores[i,] = decisiontree(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+dtrees_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Decision Trees")
+
+```
+
+### Random Forest
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  X_missing$Y = samplerun$Y_train
+  removed_data = na.omit(X_missing)
+  samplerun$Y_train = removed_data$Y
+  samplerun$X_train = subset(removed_data, select=-c(Y))
+  
+  scores[i,] = randomforest(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+rforest_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Random Forest")
+
+```
+
+### SVM
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  X_missing$Y = samplerun$Y_train
+  removed_data = na.omit(X_missing)
+  samplerun$Y_train = removed_data$Y
+  samplerun$X_train = subset(removed_data, select=-c(Y))
+  
+  scores[i,] = mysvm(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+svm_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "SVM")
+
+```
+```{r}
+summary_test_score = rbind(logreg_test_scores, dtrees_test_scores,
+                           rforest_test_scores, svm_test_scores)
+print(summary_test_score)
+
+# before selecting variables
+#logreg_test_scores  0.9185185 0.9781022
+#dtrees_test_scores  0.8985507 0.9668874
+#rforest_test_scores 0.9133858 0.9736842
+#svm_test_scores     0.9115646 0.9743590
+
+
+#after reducing variables
+#logreg_test_scores  0.9171975 0.9729730
+#dtrees_test_scores  0.8970588 0.9605263
+#rforest_test_scores 0.9064748 0.9736842
+#svm_test_scores     0.9139073 0.9714286
+
+# 35% missing data
+#logreg_test_scores  0.7785235 0.9375000
+#dtrees_test_scores  0.7159091 0.9489051
+#rforest_test_scores 0.7513812 0.9650350
+#svm_test_scores     0.8774194 0.9600000
+```
+
+## Imputing values
+
+```{r}
+impute_missing_data = function(data) {
+  
+  variable_median = apply(data, 2, median, na.rm=T)
+  for ( i in 1:ncol(data)) {
+    data[is.na(data[,i]),i]=variable_median[i]
+  }
+  return(data)
+}
+
+```
+
+### Logistic Regression
+
+```{r warning=FALSE, message=FALSE}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  samplerun$X_train = impute_missing_data(X_missing)
+ 
+  
+  scores[i,] = logreg(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+logreg_test_scores = sort(scores[,2])[c(5,95)]
+
+```
+
+### Decision Tree
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  samplerun$X_train = impute_missing_data(X_missing)
+  
+  scores[i,] = decisiontree(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+dtrees_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Decision Trees")
+
+```
+
+### Random Forest
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  samplerun$X_train = impute_missing_data(X_missing)
+
+  scores[i,] = randomforest(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+rforest_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "Random Forest")
+
+```
+
+### SVM
+
+```{r}
+
+scores=matrix(ncol=2,nrow=100, NA)
+for (i in 1:100) {
+  samplerun = train_test_split(X_select, Y, .2, i)
+  X_missing = get_data_with_missing_values(samplerun$X_train, 0.35)
+  samplerun$X_train = impute_missing_data(X_missing)
+
+  scores[i,] = mysvm(samplerun$X_train, samplerun$X_test,
+                  samplerun$Y_train,samplerun$Y_test)
+  colnames(scores)=c("Train","Test")
+}
+print("Train 90%")
+sort(scores[,1])[c(5,95)]
+print("Test 90%")
+sort(scores[,2])[c(5,95)]
+svm_test_scores = sort(scores[,2])[c(5,95)]
+
+plot_scores_hist(scores, "SVM")
+
+```
+```{r}
+summary_test_score = rbind(logreg_test_scores, dtrees_test_scores,
+                           rforest_test_scores, svm_test_scores)
+print(summary_test_score)
+
+# before selecting variables
+#logreg_test_scores  0.9185185 0.9781022
+#dtrees_test_scores  0.8985507 0.9668874
+#rforest_test_scores 0.9133858 0.9736842
+#svm_test_scores     0.9115646 0.9743590
+
+
+#after reducing variables
+#logreg_test_scores  0.9171975 0.9729730
+#dtrees_test_scores  0.8970588 0.9605263
+#rforest_test_scores 0.9064748 0.9736842
+#svm_test_scores     0.9139073 0.9714286
+
+# 35% missing data
+#logreg_test_scores  0.7785235 0.9375000
+#dtrees_test_scores  0.7159091 0.9489051
+#rforest_test_scores 0.7513812 0.9650350
+#svm_test_scores     0.8774194 0.9600000
+
+#imputation
+#logreg_test_scores  0.8960000 0.9659864
+#dtrees_test_scores  0.8611111 0.9618321
+#rforest_test_scores 0.8888889 0.9650350
+#svm_test_scores     0.8993289 0.9692308
+```
+
+# 3.6 Important variables
+
+```{r}
+    samplerun = train_test_split(X_select, Y, .2, 123)
+    sampletrain = cbind(samplerun$Y_train, samplerun$X_train)
+    colnames(sampletrain)[1]="Y"
+    clf = train(as.factor(Y) ~ ., 
+                data=sampletrain,
+                method="cforest",
+                trControl=trainControl(method="none")
+                )
+    #print(summary(clf))
+    varImp(clf)
+    
+```
+```{r}
+important_var = varImp(clf, scale=F)
+important_var_df = important_var$importance
+important_var_df$variables = rownames(important_var_df)
+
+ggplot(important_var_df) + 
+  geom_bar(mapping=aes(x=variables,y=Overall, fill=variables), stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position ="none")
+
+```
