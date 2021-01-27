@@ -242,7 +242,6 @@ randomforest <- function(X_train, X_test, Y_train, Y_test){
     temp_train = cbind(Y_train, X_train)
     colnames(temp_train)[1]='Y'
     
-    #clf = polr(as.factor(Y) ~ . , data = temp_train)
     clf = train(as.factor(Y) ~ ., 
                 data=temp_train,
                 method="cforest",

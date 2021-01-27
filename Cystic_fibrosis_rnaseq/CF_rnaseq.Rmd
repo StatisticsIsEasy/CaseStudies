@@ -1,0 +1,508 @@
+---
+title: "CF_rnaseq"
+author: "Manpreet S. Katari"
+date: "1/18/2021"
+output: html_document
+---
+
+## 4.2 - The data
+The following command downloads the dataset directly from the NCBI's GEO site. In case it doesn't work, the same Excel file is provided in this repository, under CaseStudies/RNAseq. 
+
+
+```{r}
+library(readxl)
+data_df <- read_excel("RNASeqData.xlsx")
+head(data_df)
+```
+The column headers have some unnecessary information so we will remove them to make it cleaner. 
+
+```{r}
+column_names = gsub("w_[0-9]*_O","w_O", colnames(data_df), perl=T)
+column_names = gsub("m_[0-9]*_O","m_O", column_names, perl=T)
+column_names = gsub("w_[0-9]*_H","w_H", column_names, perl=T)
+column_names = gsub("m_[0-9]*_H","m_H", column_names, perl=T)
+
+colnames(data_df) = column_names
+```
+
+
+### 4.3.1 normalization
+
+The first 5 columns are gene descriptions and identifiers. In this exercise we will start with the **raw** data. First we obtain all the columns that contain the word **raw** and use them to perform our normalization.
+
+As discussed in the book, there are many different methods of normalizing the data and we are choosing to use a very simply approach. For each gene g, this approach first maps the raw count of g to the relative abundance of g compared to all other genes for this patient; second, it multiplies that relative abundance by one million.
+
+```{r}
+raw_cols = grep("Raw", colnames(data_df), value = T)
+
+raw_cols_sums = colSums(data_df[,raw_cols])
+
+norm_cpm = t(t(data_df[,raw_cols]) * (1000000/raw_cols_sums))
+
+head(norm_cpm[,1:5])
+```
+
+```{r}
+
+norm_cpm_df = as.data.frame(norm_cpm)
+dim(norm_cpm_df)
+
+norm_cpm_df = cbind(norm_cpm_df, data_df[,1:9])
+head(norm_cpm_df)
+```
+```{r}
+colSums(norm_cpm_df[,1:5])
+
+```
+
+### 4.3.2 Remove genes that contain zeroes
+
+```{r}
+gene_with_min_greaterthan_zero = which(apply(norm_cpm_df[,raw_cols], 1, min) > 0)
+
+
+```
+
+Keep only genes with no zeroes
+
+```{r}
+data_df_subset = norm_cpm_df[gene_with_min_greaterthan_zero,]
+dim(data_df_subset)
+
+```
+
+```{r}
+number_of_zeroes_confirm = data_df[,raw_cols]==0
+sum(number_of_zeroes_confirm)
+number_of_zeroes_confirm = data_df_subset[,raw_cols]==0
+sum(number_of_zeroes_confirm)
+
+```
+
+## 4.4 Distinguishing sick patients from healthy
+
+```{r}
+healthy = grep("HC", colnames(data_df_subset), value=T)
+cf_base = grep("Base", colnames(data_df_subset), value=T)
+cf_v2 = grep("V2", colnames(data_df_subset), value=T)
+healthy
+```
+
+The approach to determining genes that are differentially expressed is similar to the one we used for determining diets that are different by comparing the difference of the final weights. However, we are not looking for an increase in the mean difference. Rather we are looking for a change and we are not sure if the gene will increase or decrease due to either sickness or treatment.
+
+For each gene g, we take the mRNA expression values of one group (e.g. healthy patients) and compare it with the expression values of gene g among another group (e.g. untreated cystic fibrosis patients).
+
+To evaluate significance (i.e. calculate p-values), we check how often a shuffled set of values (shuffling  ignores whether a patient is in one group or another) shows a difference that is greater in absolute value than the observed difference. If that happens rarely, then the p-value is low.
+
+
+```{r}
+
+shuffle <- function(grps) {
+  	# grps is a list of elements where each element contains values from different groups
+
+  num_grps = length(grps)
+  pool=numeric()
+  
+  for ( i in 1:num_grps) {
+    pool = c(pool, grps[[i]])
+  }
+  
+  pool= sample(pool, length(pool), replace=F)
+  
+  new_grps=list()
+  start_index=1
+  end_index=1
+  for (i in 1:num_grps) {
+    end_index = start_index + length(grps[[i]]) - 1
+    new_grps[[i]]=pool[start_index:end_index]
+    start_index = end_index+1
+  }
+  return(new_grps)
+}
+
+
+
+```
+
+
+```{r}
+logFC <- function(grpA, grpB){
+    return(log2( (sum(grpB)/length(grpB)) / (sum(grpA) / length(grpA)))) 
+}
+
+
+```
+
+```{r}
+
+lfc2meansig = function(grpA, grpB) {
+  observed_mean_diff = logFC(grpA,grpB)
+
+  count=0
+  num_shuffles=100000
+
+  samples = list(grpA=grpA, grpB=grpB)
+  
+  for (i in 1:num_shuffles) {
+    new_samples = shuffle(samples)
+    mean_diff = logFC(new_samples[[1]], new_samples[[2]])
+    if (abs(observed_mean_diff) <= abs(mean_diff)) {
+      count = count+1
+    }
+  }
+  
+  return(count/num_shuffles)
+
+}
+
+
+
+```
+
+```{r}
+
+avg_diff_sig_test = function( df_norm_hc, df_norm_cf  ) {
+  all_p_sig_values=numeric()
+  for (i in 1:nrow(df_norm_cf)) {
+    all_p_sig_values[i] = lfc2meansig(as.numeric(df_norm_hc[i,]),
+                                   as.numeric(df_norm_cf[i,]))
+  }
+  return(all_p_sig_values)
+}
+
+
+```
+
+```{r eval=F}
+set.seed(123)
+norm_p_values = avg_diff_sig_test(data_df_subset[healthy],
+                                  data_df_subset[cf_base])
+head(norm_p_values)
+saveRDS(norm_p_values, "norm_p_values_unpaired_raw.rds")
+```
+
+```{r echo=F}
+norm_p_values = readRDS("norm_p_values_unpaired_raw.rds")
+head(norm_p_values)
+```
+
+```{r}
+sig_genes = which(norm_p_values < 0.05)
+
+print(paste("Total number of genes that pass p-value threshold of 0.05:", length(sig_genes), sep=" "))
+
+
+```
+```{r}
+sig_gene_names = data_df_subset$ID[sig_genes]
+head(sig_gene_names)
+
+```
+
+### 4.4.1 Bonferroni correction
+
+In this method, we divide the threshold by the number of genes. So, if we take a threshold of 20% (or 0.2), the p-values that would pass this threshold would be `0.2/num_of_genes`. If any gene g had a p-value less than or equal to 1 in 100,000, then that would satisfy the 0.2 Bonferonni threshold because 0.2/15250 <= 2/100000
+
+```{r}
+bon_sig_genes = which(norm_p_values < (0.2/length(norm_p_values)))
+print(paste("Number of genes that pass bonferroni correction threshold of 0.2: ", length(bon_sig_genes), sep=" "))
+```
+
+```{r}
+bon_sig_genes_names = data_df_subset$ID[bon_sig_genes]
+head(bon_sig_genes_names)
+
+```
+
+### 4.4.2 Benjamini–Hochberg procedure
+
+
+Put the individual p-values in order, from smallest to largest. The smallest p-value has a rank of i=1, then next smallest has i=2, etc. Compare each individual p-value to its Benjamini-Hochberg critical value, (i/m)Q, where i is the rank, m is the total number of tests, and Q is the false discovery rate you choose. The largest p-value that has P<(i/m)Q is significant, and all of the p-values smaller than it are also significant, even the ones that aren't less than their Benjamini-Hochberg critical value. For our purposes the ciritical value is 0.05 meaning we tolerate 5% false positive rate (in this case meaning genes that are declared to be differentially expressed but they are not).
+
+```{r}
+benjamin_hochberg_corrected_p_values<-function(p_values, fdr){
+  num_genes = length(p_values)
+  sorted_indices = order(p_values, decreasing = F)
+  sorted_p_values = sort(p_values, decreasing = F)
+  
+  benjamin_hochberg_critical_values = numeric()
+  for (i in num_genes:1) {
+    benjamin_hochberg_critical_values[i]= (i/num_genes)*fdr
+    if (sorted_p_values[i] < benjamin_hochberg_critical_values[i]) {
+      return(list(i=i, sorted_indices = sorted_indices))
+    }
+  }
+}
+
+i_sorted_indices = benjamin_hochberg_corrected_p_values(norm_p_values, 0.05)
+
+print(i_sorted_indices$i)
+```
+## An alternative way to adjust with Benjamini Hochberg method.
+
+```{r}
+bh_sort = p.adjust(norm_p_values, "BH")
+
+fdr_sig_genes_names = data_df_subset$ID[i_sorted_indices$sorted_indices[1:i_sorted_indices$i]]
+```
+
+## Violin Plots
+
+The data we loaded is in a **wide** format where the values for each gene is presented in a different row.
+We will **melt** the data to create a **long** format where each value is in a separate row and every row is a specific combination of gene and sample. This format will prove useful in creating violin plots using the seaborn package.
+
+```{r}
+library(reshape2)
+norm_hc_cf_with_genename = c("ID", healthy)
+norm_hc_cf_with_genename_melt = melt(data_df_subset[,norm_hc_cf_with_genename], id="ID")
+norm_hc_cf_with_genename_melt$variable = "HC"
+
+norm_cf_with_genename = c("ID", cf_base)
+norm_cf_with_genename_melt = melt(data_df_subset[,norm_cf_with_genename], id="ID")
+norm_cf_with_genename_melt$variable = "CF"
+
+norm_hc_cf_with_genename_melt = rbind(norm_hc_cf_with_genename_melt,norm_cf_with_genename_melt)
+
+head(norm_hc_cf_with_genename_melt)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+genestoplot = filter(norm_hc_cf_with_genename_melt, ID %in% bon_sig_genes_names[4])
+
+ggplot(genestoplot) +
+  geom_violin(mapping=aes(x=variable, y=value, fill=variable)) +
+  geom_boxplot(mapping=aes(x=variable,y=value), width=0.1, alpha=0.2)
+
+```
+
+## 4.5 Healthy vs CF confidence interval
+
+```{r}
+
+# We will use the genes that passed bonferroni correction cutoff.
+data_df_subset_bon = filter(data_df_subset, ID %in% bon_sig_genes_names)
+df_norm_hc_bon_sig = data_df_subset_bon[,healthy]
+df_norm_cf_bon_sig = data_df_subset_bon[,cf_base]
+print(dim(df_norm_cf_bon_sig))
+print(dim(df_norm_hc_bon_sig))
+
+
+```
+
+
+```{r}
+bootstrap = function(x) {
+  samp_x = sample(x, length(x), replace=T)
+}
+
+
+```
+
+```{r}
+
+diff2meanconf = function(grpA, grpB, num_resamples) {
+  samples = list(grpA, grpB) 
+    a = 1
+    b = 2
+    
+
+    out = numeric()                # will store results of each time we resample
+    for (i in 1:num_resamples){
+        # get bootstrap samples for each of our groups
+        # then compute our statistic of interest
+        # append statistic to out
+        bootstrap_samples = list()  # list of lists
+        for (j in 1:length(samples)){
+            bootstrap_samples[[j]]=bootstrap(samples[[j]])
+        }
+
+        # now we have a list of bootstrap samples, run meandiff
+        out[i]=logFC(bootstrap_samples[[a]], bootstrap_samples[[b]])
+    }    
+    
+    return(out)
+    
+}
+
+
+```
+
+
+```{r}
+diff2meanJustconf<-function(out, conf_interval){
+    tails = (1 - conf_interval) / 2
+    num_resamples = 1000
+    lower_bound = ceiling(num_resamples * tails)
+    upper_bound = floor(num_resamples * (1 - tails))
+    return(c(out[lower_bound], out[upper_bound]))
+  
+}
+
+
+```
+
+```{r}
+set.seed(123)
+
+all_mean_diff = list()
+
+for ( i in 1:nrow(df_norm_hc_bon_sig)) {
+  all_mean_diff[[i]]=diff2meanconf(df_norm_hc_bon_sig[i,],
+                                   df_norm_cf_bon_sig[i,],
+                                   1000)
+}
+
+
+```
+
+```{r}
+low_high = list()
+
+for (i in 1:length(all_mean_diff)) {
+  low_high[[i]] = diff2meanJustconf(all_mean_diff[[i]], 0.9)
+}
+
+
+```
+
+```{r}
+abs_conf = lapply(low_high, abs)
+max_conf = lapply(abs_conf, max)
+```
+
+```{r}
+hist(unlist(low_high), breaks=30)
+hist(unlist(abs_conf))
+hist(unlist(max_conf))
+
+```
+
+```{r}
+top10_ci_index = order(unlist(max_conf), decreasing = T)[1:10]
+
+top10_ci_genes = bon_sig_genes_names[top10_ci_index]
+top10_ci_genes
+```
+
+```{r}
+
+top10_ci_gene_description = data_df_subset_bon[ top10_ci_index,"Description"]
+top10_ci_gene_description
+```
+
+```{r}
+
+
+library(ggplot2)
+library(dplyr)
+genestoplot = filter(norm_hc_cf_with_genename_melt, ID %in% c("MMP9","SOCS3","ANXA3"))
+dodge = position_dodge(width=.4)
+ggplot(genestoplot, mapping=aes(x=ID, y=value, fill=variable)) +  
+  geom_violin(position=dodge) 
+
+```
+## Figure 4.1 - Confidence interval of genes identified in published work.
+
+```{r}
+
+names(all_mean_diff) = bon_sig_genes_names
+all_mean_diff_df = t(as.data.frame(all_mean_diff))
+all_mean_diff_df = as.data.frame(all_mean_diff_df)
+all_mean_diff_df$ID = rownames(all_mean_diff_df)
+all_mean_diff_melt = melt(all_mean_diff_df, id.vars="ID")
+head(all_mean_diff_melt)
+
+genestoplot=all_mean_diff_melt[all_mean_diff_melt$ID %in% c("MMP9","SOCS3","ANXA3"),]
+
+
+ggplot(genestoplot) + 
+  geom_violin(mapping = aes(x=ID, y=value, fill=ID)) +  
+  ylim(0,3)
+```
+
+## 4.6.1 Random Forest Inference
+
+First we need to make subset of the original dataframe to contain only our top 10 genes. We will than separate them into the healthy and cf dataframes so we can transpose them and add the corresponding labels. We transpose the data because we will be using the gene expression values as the variables to predict which sample/patient is healthy or has cystic fibrosis. 
+
+```{r}
+
+data_df_subset_bon_top10ci = subset(data_df_subset_bon, ID %in% top10_ci_genes) 
+
+
+df_norm_hc_bon_sig_top10ci = data_df_subset_bon_top10ci[healthy]
+df_norm_cf_bon_sig_top10ci = data_df_subset_bon_top10ci[cf_base]
+rownames(df_norm_hc_bon_sig_top10ci) = data_df_subset_bon_top10ci$ID
+rownames(df_norm_cf_bon_sig_top10ci) = data_df_subset_bon_top10ci$ID
+
+print(dim(df_norm_hc_bon_sig_top10ci))
+print(dim(df_norm_cf_bon_sig_top10ci))
+
+
+```
+```{r}
+df_norm_healthy_T = t(df_norm_hc_bon_sig_top10ci)
+df_norm_base_T = t(df_norm_cf_bon_sig_top10ci)
+X = rbind(df_norm_healthy_T, df_norm_base_T)
+dim(X)
+
+
+```
+
+```{r}
+
+Y = rep(c(0,1), each=20)
+table(Y)
+
+```
+
+```{r}
+library(party)
+library(caret)
+XY = cbind(Y,X)
+
+rf_results = data.frame(f1=numeric(),precision=numeric(),recall=numeric())
+impvar_df = data.frame(Overall=numeric(),Gene=character())
+for (i in 1:100) {
+    clf = train(as.factor(Y) ~ ., 
+                data=XY,
+                method="cforest",
+                trControl=trainControl(method="cv", number=5, 
+                                       savePredictions = "final"),
+                
+                )
+    TP = sum(clf$pred$pred == 1 & clf$pred$obs == 1)
+    TN = sum(clf$pred$pred == 0 & clf$pred$obs == 0)
+    FP = sum(clf$pred$pred == 1 & clf$pred$obs == 0)
+    FN = sum(clf$pred$pred == 0 & clf$pred$obs == 1)
+    
+    rf_results[i,"precision"] = (TP / (TP + FP))
+    rf_results[i,"recall"] = (TP / (TP + FN))
+    rf_results[i,"f1"] = (2 * rf_results[i,"precision"] * rf_results[i,"recall"]) / (rf_results[i,"precision"] + rf_results[i,"recall"]  )
+
+    varimptemp = varImp(clf)$importance
+    varimptemp$Gene = rownames(varimptemp)
+    impvar_df = rbind(impvar_df, varimptemp)
+    
+}    
+    
+
+```
+
+```{r}
+rf_results_melt = melt(rf_results)
+
+ggplot(rf_results_melt) +
+  geom_violin(mapping = aes(x=variable,y=value,fill=variable)) +
+  ylim(0,1)
+
+```
+
+```{r}
+ggplot(impvar_df) +
+  geom_violin(mapping = aes(x=Gene, y=Overall, fill=Gene ), scale="width") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+```
+
