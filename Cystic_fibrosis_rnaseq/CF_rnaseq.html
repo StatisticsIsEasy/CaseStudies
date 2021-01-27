@@ -468,7 +468,7 @@ colnames(data_df) = column_names</code></pre>
 <div id="normalization" class="section level3">
 <h3>4.3.1 normalization</h3>
 <p>The first 5 columns are gene descriptions and identifiers. In this exercise we will start with the <strong>raw</strong> data. First we obtain all the columns that contain the word <strong>raw</strong> and use them to perform our normalization.</p>
-<p>As discussed in the book, there are many different methods of normalizing the data and we are choosing to use a very simply approach. For each gene g, this approach first maps the raw count of g to the relative abundance of g compared to all other genes for this patient; second, it multiplies that relative abundance by one million.</p>
+<p>As discussed in the book, there are many different methods of normalizing the data and we are choosing to use a very simple. For each gene g, this approach first maps the raw count of g to the relative abundance of g compared to all other genes for this patient; second, it multiplies that relative abundance by one million.</p>
 <pre class="r"><code>raw_cols = grep(&quot;Raw&quot;, colnames(data_df), value = T)
 
 raw_cols_sums = colSums(data_df[,raw_cols])
@@ -683,7 +683,7 @@ healthy</code></pre>
 ## [13] &quot;Raw_HC_Auto_082_253&quot; &quot;Raw_HC_Auto_084_255&quot; &quot;Raw_HC_Auto_088_259&quot;
 ## [16] &quot;Raw_HC_Auto_091_263&quot; &quot;Raw_HC_Auto_093_265&quot; &quot;Raw_HC_Auto_095_267&quot;
 ## [19] &quot;Raw_HC_Immune_006&quot;   &quot;Raw_HC_Immune_008&quot;</code></pre>
-<p>The approach to determining genes that are differentially expressed is similar to the one we used for determining diets that are different by comparing the difference of the final weights. However, we are not looking for an increase in the mean difference. Rather we are looking for a change and we are not sure if the gene will increase or decrease due to either sickness or treatment.</p>
+<p>The approach to determining genes that are differentially expressed is similar to the one we used for determining diets that are different by comparing the difference of the final weights. However, we are not looking for an increase in the mean difference. Rather we are looking for a change and we are not sure if the gene will increase or decrease due to sickness or health.</p>
 <p>For each gene g, we take the mRNA expression values of one group (e.g. healthy patients) and compare it with the expression values of gene g among another group (e.g. untreated cystic fibrosis patients).</p>
 <p>To evaluate significance (i.e. calculate p-values), we check how often a shuffled set of values (shuffling ignores whether a patient is in one group or another) shows a difference that is greater in absolute value than the observed difference. If that happens rarely, then the p-value is low.</p>
 <pre class="r"><code>shuffle &lt;- function(grps) {
@@ -763,7 +763,7 @@ head(bon_sig_genes_names)</code></pre>
 </div>
 <div id="benjaminihochberg-procedure" class="section level3">
 <h3>4.4.2 Benjamini–Hochberg procedure</h3>
-<p>Put the individual p-values in order, from smallest to largest. The smallest p-value has a rank of i=1, then next smallest has i=2, etc. Compare each individual p-value to its Benjamini-Hochberg critical value, (i/m)Q, where i is the rank, m is the total number of tests, and Q is the false discovery rate you choose. The largest p-value that has P&lt;(i/m)Q is significant, and all of the p-values smaller than it are also significant, even the ones that aren’t less than their Benjamini-Hochberg critical value. For our purposes the ciritical value is 0.05 meaning we tolerate 5% false positive rate (in this case meaning genes that are declared to be differentially expressed but they are not).</p>
+<p>The Benjamini-Hochberg method of creating a set of genes that have a given false discovery rate starts by listing the individual gene p-values in ascending order, from smallest to largest. The smallest p-value has a rank <span class="math inline">\(i = 1\)</span>, the next smallest has <span class="math inline">\(i = 2\)</span>, etc. Compare each individual p-value to its Benjamini-Hochberg critical value, <span class="math inline">\((i/m)Q\)</span>, where <span class="math inline">\(i\)</span> is the rank, <span class="math inline">\(m\)</span> is the total number of tests (15,250, as above), and <span class="math inline">\(Q\)</span> is the false discovery rate the user can tolerate, say 5%. The gene associated with the largest p-value <span class="math inline">\(P\)</span> that has <span class="math inline">\(P&lt;(i/m)Q\)</span> should be included as should all of the genes associated with p-values less than <span class="math inline">\(P\)</span> (including that aren’t less than their Benjamini-Hochberg critical value). 6,082 of the genes having the lowest p-values passed this new cutoff.</p>
 <pre class="r"><code>benjamin_hochberg_corrected_p_values&lt;-function(p_values, fdr){
   num_genes = length(p_values)
   sorted_indices = order(p_values, decreasing = F)

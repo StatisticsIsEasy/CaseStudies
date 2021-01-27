@@ -30,7 +30,7 @@ colnames(data_df) = column_names
 
 The first 5 columns are gene descriptions and identifiers. In this exercise we will start with the **raw** data. First we obtain all the columns that contain the word **raw** and use them to perform our normalization.
 
-As discussed in the book, there are many different methods of normalizing the data and we are choosing to use a very simply approach. For each gene g, this approach first maps the raw count of g to the relative abundance of g compared to all other genes for this patient; second, it multiplies that relative abundance by one million.
+As discussed in the book, there are many different methods of normalizing the data and we are choosing to use a very simple. For each gene g, this approach first maps the raw count of g to the relative abundance of g compared to all other genes for this patient; second, it multiplies that relative abundance by one million.
 
 ```{r}
 raw_cols = grep("Raw", colnames(data_df), value = T)
@@ -88,7 +88,7 @@ cf_v2 = grep("V2", colnames(data_df_subset), value=T)
 healthy
 ```
 
-The approach to determining genes that are differentially expressed is similar to the one we used for determining diets that are different by comparing the difference of the final weights. However, we are not looking for an increase in the mean difference. Rather we are looking for a change and we are not sure if the gene will increase or decrease due to either sickness or treatment.
+The approach to determining genes that are differentially expressed is similar to the one we used for determining diets that are different by comparing the difference of the final weights. However, we are not looking for an increase in the mean difference. Rather we are looking for a change and we are not sure if the gene will increase or decrease due to  sickness or health.
 
 For each gene g, we take the mRNA expression values of one group (e.g. healthy patients) and compare it with the expression values of gene g among another group (e.g. untreated cystic fibrosis patients).
 
@@ -217,7 +217,7 @@ head(bon_sig_genes_names)
 ### 4.4.2 Benjamini–Hochberg procedure
 
 
-Put the individual p-values in order, from smallest to largest. The smallest p-value has a rank of i=1, then next smallest has i=2, etc. Compare each individual p-value to its Benjamini-Hochberg critical value, (i/m)Q, where i is the rank, m is the total number of tests, and Q is the false discovery rate you choose. The largest p-value that has P<(i/m)Q is significant, and all of the p-values smaller than it are also significant, even the ones that aren't less than their Benjamini-Hochberg critical value. For our purposes the ciritical value is 0.05 meaning we tolerate 5% false positive rate (in this case meaning genes that are declared to be differentially expressed but they are not).
+The Benjamini-Hochberg method of creating a set of genes that have a given false discovery rate starts by listing the individual gene p-values in ascending order, from smallest to largest. The smallest p-value has a rank  $i = 1$, the next smallest has $i = 2$, etc. Compare each individual p-value to its Benjamini-Hochberg critical value, $(i/m)Q$, where $i$ is the rank, $m$ is the total number of tests (15,250, as above), and $Q$ is the false discovery rate the user can tolerate, say 5%.  The gene associated with the largest p-value $P$ that has $P<(i/m)Q$ should be included as should all of the genes associated with  p-values less than $P$ (including that aren't less than their Benjamini-Hochberg critical value). 6,082 of the genes having the lowest p-values passed this new cutoff.
 
 ```{r}
 benjamin_hochberg_corrected_p_values<-function(p_values, fdr){
